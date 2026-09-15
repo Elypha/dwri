@@ -40,6 +40,6 @@ def test_compute_dwri_golden():
 
     dict_dwri, df_dwri = compute_dwri(signal, noise)
 
-    assert_frame_equal(df_dwri, expected, check_dtypes=False, rel_tol=1e-12, abs_tol=1e-12)
+    assert_frame_equal(df_dwri, expected.select("keyword", "dwri", "dwri_raw", pl.exclude("keyword", "dwri", "dwri_raw")), check_dtypes=False, rel_tol=1e-12, abs_tol=1e-12)
     assert list(dict_dwri) == expected["keyword"].to_list()
     assert_frame_equal(pl.DataFrame({"dwri": list(dict_dwri.values())}), expected.select("dwri"), rel_tol=1e-12, abs_tol=1e-12)

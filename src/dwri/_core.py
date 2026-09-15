@@ -22,11 +22,13 @@ def _calc_weighted_reception_importance(
     score_fn: Callable[[pl.Expr], pl.Expr],
 ) -> pl.DataFrame:
     df_score = (
-        df.explode(col_tokens, empty_as_null=False)
+        df.lazy()
+        .explode(col_tokens, empty_as_null=False)
         .group_by(col_tokens)
         .agg(
             score=score_fn(pl.col(col_weight)).sum(),
         )
+        .collect()
     )
     df_nt = (
         df.select(
@@ -173,6 +175,6 @@ def compute_dwri(
     if not df_dwri.select(pl.col("dwri").is_finite().fill_null(False).all()).item():
         raise ValueError("DWRI normalisation produced non-finite values; check the input corpora, weights, and normalisation function.")
 
-    dict_dwri = {row["keyword"]: row["dwri"] for row in df_dwri.select(["keyword", "dwri"]).to_dicts()}
+    dict_dwri = dict(zip(df_dwri["keyword"], df_dwri["dwri"]))
 
     return dict_dwri, df_dwri
