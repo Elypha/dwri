@@ -12,6 +12,7 @@ NormalisationStrategy = Literal[
     "zscore",
     "quantile",
 ]
+_COLS_ORDER = ["keyword", "dwri", "dwri_raw"]
 
 
 def _calc_weighted_reception_importance(
@@ -166,6 +167,7 @@ def compute_dwri(
         )
         .sort("dwri", descending=True)
         .rename({col_tokens: "keyword"})
+        .select(*_COLS_ORDER, pl.exclude(_COLS_ORDER))
     )
 
     if not df_dwri.select(pl.col("dwri").is_finite().fill_null(False).all()).item():
