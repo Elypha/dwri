@@ -1,7 +1,7 @@
-from typing import Callable, Literal
+from collections.abc import Callable
+from typing import Literal
 
 import polars as pl
-
 
 ScoreStrategy = Literal[
     "linear",
@@ -21,7 +21,7 @@ def _calc_weighted_reception_importance(
     score_fn: Callable[[pl.Expr], pl.Expr],
 ) -> pl.DataFrame:
     df_score = (
-        df.explode(col_tokens)
+        df.explode(col_tokens, empty_as_null=False)
         .group_by(col_tokens)
         .agg(
             score=score_fn(pl.col(col_weight)).sum(),
@@ -31,7 +31,7 @@ def _calc_weighted_reception_importance(
         df.select(
             pl.col(col_tokens).list.unique(),
         )
-        .explode(col_tokens)
+        .explode(col_tokens, empty_as_null=False)
         .group_by(col_tokens)
         .agg(
             nt=pl.len(),
@@ -121,6 +121,8 @@ def compute_dwri(
             "sqrt": lambda w: w.sqrt(),
             "log1p_abs": lambda w: (pl.lit(1) + (w - 1).abs()).log(),
         }
+        if score_strategy not in strategies:
+            raise ValueError(f"Unknown score strategy: {score_strategy!r}. Expected one of: {', '.join(strategies)}.")
         score_fn = strategies[score_strategy]
 
     if normalisation_fn is None:
@@ -128,6 +130,8 @@ def compute_dwri(
             "zscore": lambda wri: (wri - wri.mean()) / wri.std(),
             "quantile": lambda wri: (wri.rank(method="average") - 1) / (wri.count() - 1),
         }
+        if normalisation_strategy not in strategies:
+            raise ValueError(f"Unknown normalisation strategy: {normalisation_strategy!r}. Expected one of: {', '.join(strategies)}.")
         normalisation_fn = strategies[normalisation_strategy]
 
     df_signal = _calc_weighted_reception_importance(
@@ -137,16 +141,15 @@ def compute_dwri(
         score_fn,
     ).rename(lambda col: f"{col}_signal" if col != col_tokens else col)
 
-    # catches a rare edge case
-    if df_signal.height < 2:
-        raise ValueError(f"`compute_dwri()` requires at least 2 unique signal tokens to normalise; got {df_signal.height}. Both built-in normalisation strategies (zscore, quantile) are undefined for a single data point.")
-
     df_noise = _calc_weighted_reception_importance(
         df_noise,
         col_tokens,
         col_weight,
         score_fn,
     ).rename(lambda col: f"{col}_noise" if col != col_tokens else col)
+
+    if df_signal.height < 2 or df_noise.height < 2:
+        raise ValueError(f"`compute_dwri()` requires at least 2 unique tokens in each corpus after preprocessing; got {df_signal.height} signal and {df_noise.height} noise tokens.")
 
     df_dwri = (
         df_signal.join(
@@ -164,6 +167,10 @@ def compute_dwri(
         .sort("dwri", descending=True)
         .rename({col_tokens: "keyword"})
     )
+
+    if not df_dwri.select(pl.col("dwri").is_finite().fill_null(False).all()).item():
+        raise ValueError("DWRI normalisation produced non-finite values; check the input corpora, weights, and normalisation function.")
+
     dict_dwri = {row["keyword"]: row["dwri"] for row in df_dwri.select(["keyword", "dwri"]).to_dicts()}
 
     return dict_dwri, df_dwri
