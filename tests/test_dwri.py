@@ -1,73 +1,45 @@
-import math
-
 import polars as pl
-
 from dwri import compute_dwri
+from polars.testing import assert_frame_equal
 
 
-def test_basic_returns_correct_types_and_structure():
-    df_signal = pl.DataFrame({
-        "tokens": [["apple", "banana", "apple"], ["banana", "cherry"]],
-        "weight": [10.0, 5.0],
+def test_compute_dwri_golden():
+    signal = pl.DataFrame({
+        "tokens": [
+            ["alpha", "alpha", "shared"],
+            ["beta", "shared"],
+            ["alpha", "gamma", "shared"],
+            ["gamma", "signal_only"],
+            [],
+        ],
+        "weight": [11.0, -9.0, 1.0, 4.0, 100.0],
     })
-    df_noise = pl.DataFrame({
-        "tokens": [["apple", "date"], ["elderberry"]],
-        "weight": [3.0, 2.0],
+    noise = pl.DataFrame({
+        "tokens": [
+            ["alpha", "shared", "noise_only"],
+            ["alpha", "alpha", "beta"],
+            ["beta", "shared", "shared"],
+            ["gamma", "noise_only"],
+            [],
+        ],
+        "weight": [6.0, 2.0, -4.0, 1.0, 50.0],
     })
-    dict_dwri, df_dwri = compute_dwri(df_signal, df_noise)
-
-    assert isinstance(dict_dwri, dict)
-    assert isinstance(df_dwri, pl.DataFrame)
-    expected_cols = {
-        "keyword", "nt_signal", "score_signal", "penalty_signal", "wri_signal",
-        "nt_noise", "score_noise", "penalty_noise", "wri_noise",
-        "dwri_raw", "dwri",
-    }
-    assert expected_cols.issubset(set(df_dwri.columns))
-    scores = df_dwri["dwri"].to_list()
-    assert scores == sorted(scores, reverse=True)
-    assert set(dict_dwri.keys()) == set(df_dwri["keyword"].to_list())
-
-
-def test_token_only_in_signal_gets_finite_score():
-    df_signal = pl.DataFrame({
-        "tokens": [["exclusive", "shared"], ["exclusive"]],
-        "weight": [8.0, 4.0],
-    })
-    df_noise = pl.DataFrame({
-        "tokens": [["shared", "other"], ["other"]],
-        "weight": [3.0, 2.0],
-    })
-    dict_dwri, _ = compute_dwri(df_signal, df_noise)
-
-    assert "exclusive" in dict_dwri
-    score = dict_dwri["exclusive"]
-    assert not math.isnan(score)
-    assert not math.isinf(score)
-    assert dict_dwri["exclusive"] > dict_dwri["shared"]
-
-
-def test_custom_score_fn_and_normalisation_fn():
-    df_signal = pl.DataFrame({
-        "tokens": [["alpha", "beta"], ["alpha", "gamma"]],
-        "weight": [4.0, 2.0],
-    })
-    df_noise = pl.DataFrame({
-        "tokens": [["beta", "delta"], ["delta"]],
-        "weight": [1.0, 1.0],
+    expected = pl.DataFrame({
+        "keyword": ["signal_only", "gamma", "alpha", "beta", "shared"],
+        "nt_signal": [1, 2, 2, 1, 3],
+        "score_signal": [1.3862943611198906, 1.3862943611198906, 4.795790545596741, 2.3978952727983707, 4.795790545596741],
+        "penalty_signal": [1.916290731874155, 1.5108256237659907, 1.5108256237659907, 1.916290731874155, 1.2231435513142097],
+        "wri_signal": [0.1799574124856805, 0.14188049101718814, 0.4908258566926457, 0.31127518138055876, 0.39736583228937167],
+        "nt_noise": [0, 1, 2, 2, 2],
+        "score_noise": [0.0, 0.0, 3.1780538303479453, 2.4849066497880004, 5.375278407684165],
+        "penalty_noise": [0.0, 1.916290731874155, 1.5108256237659907, 1.5108256237659907, 1.5108256237659907],
+        "wri_noise": [0.0, 0.0, 0.3742389536596965, 0.2926158316383423, 0.632978128850964],
+        "dwri_raw": [0.1799574124856805, 0.14188049101718814, 0.11658690303294922, 0.018659349742216447, -0.23561229656159238],
+        "dwri": [0.8101682437453499, 0.5827760780528934, 0.4317249024837748, -0.1530901919342261, -1.6715790323477921],
     })
 
-    custom_score = lambda w: w * 2
-    custom_norm = lambda x: (x - x.min()) / (x.max() - x.min())
+    dict_dwri, df_dwri = compute_dwri(signal, noise)
 
-    dict_dwri, df_dwri = compute_dwri(
-        df_signal,
-        df_noise,
-        score_fn=custom_score,
-        normalisation_fn=custom_norm,
-    )
-
-    assert isinstance(dict_dwri, dict)
-    scores = df_dwri["dwri"].to_list()
-    assert min(scores) >= -1e-9
-    assert max(scores) <= 1.0 + 1e-9
+    assert_frame_equal(df_dwri, expected, check_dtypes=False, rel_tol=1e-12, abs_tol=1e-12)
+    assert list(dict_dwri) == expected["keyword"].to_list()
+    assert_frame_equal(pl.DataFrame({"dwri": list(dict_dwri.values())}), expected.select("dwri"), rel_tol=1e-12, abs_tol=1e-12)
